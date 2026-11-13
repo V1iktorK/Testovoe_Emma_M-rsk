@@ -684,29 +684,59 @@ def export_all(hull, out_dir):
 CLAY_VIEWS = {"10_clay_fore": "quarter_fore", "11_clay_bow": "bow"}
 
 
-def export_uv_layout(hull, out_dir):
-    """Карта развёртки (SVG, векторно) - чтобы текстурировать корпус в 3ds Max/Substance.
+UV_MAP = [
+    (0.00, 0.28, 1.00, 1.00, "Обшивка: борт + подводная часть",
+     "u — вдоль обхода корпуса (корма → нос → борт), v — от киля к палубе"),
+    (0.00, 0.14, 1.00, 0.26, "Транец", "u — по ширине транца, v — по высоте"),
+    (0.00, 0.00, 0.48, 0.13, "Палуба", "план: u — по длине, v — по полушироте"),
+    (0.52, 0.00, 1.00, 0.13, "Днище", "план: u — по длине, v — по полушироте"),
+]
 
-    PNG-вариант этого оператора требует инициализированного GPU, поэтому в headless
-    выгружаем SVG: он открывается в Max/Illustrator/браузере и масштабируется без потерь.
+
+def export_uv_layout(hull, out_dir):
+    """Компактная размеченная карта UV-развёртки (SVG, несколько КБ).
+
+    Blender умеет выгружать «раскладку» сам, но сыпет контуром всех 68 тыс. граней
+    (~11 МБ). Здесь острова и так прямоугольные, поэтому рисуем схему с подписями
+    и линией КВЛ - так модельеру в 3ds Max сразу видно, где красить борт и днище.
     """
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, "12_uv_layout.svg")
-    try:
-        bpy.ops.object.select_all(action="DESELECT")
-        hull.select_set(True)
-        bpy.context.view_layer.objects.active = hull
-        bpy.ops.object.mode_set(mode="EDIT")
-        bpy.ops.mesh.select_all(action="SELECT")
-        bpy.ops.uv.export_layout(filepath=path, mode="SVG", size=(2048, 2048), opacity=0.35)
-        bpy.ops.object.mode_set(mode="OBJECT")
-        print("UV_LAYOUT %s" % path, flush=True)
-    except Exception as exc:                          # noqa: BLE001
-        print("UV_LAYOUT_FAILED %r" % (exc,), flush=True)
-        try:
-            bpy.ops.object.mode_set(mode="OBJECT")
-        except Exception:                             # noqa: BLE001
-            pass
+    W = 1000
+
+    def X(u):
+        return u * W
+
+    def Y(v):
+        return (1.0 - v) * W
+
+    out = ['<?xml version="1.0" encoding="UTF-8"?>',
+           '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d">' % (W, W, W, W),
+           '<rect width="100%" height="100%" fill="#12161c"/>',
+           '<text x="16" y="30" fill="#8ab4f8" font-family="Segoe UI, Arial" font-size="24">'
+           'Emma Maersk hull 1:100 — карта UV-развёртки (u / v в 0…1)</text>']
+    for u0, v0, u1, v1, title, note in UV_MAP:
+        x0, y0 = X(u0), Y(v1)
+        w, h = X(u1) - X(u0), Y(v0) - Y(v1)
+        out.append('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="#1b232d" '
+                   'stroke="#6fa8dc" stroke-width="2"/>' % (x0, y0, w, h))
+        out.append('<text x="%.1f" y="%.1f" fill="#d7e6f5" font-family="Segoe UI, Arial" '
+                   'font-size="22" text-anchor="middle">%s</text>'
+                   % (x0 + w / 2.0, y0 + (34 if note else h / 2.0), title))
+        if note:
+            out.append('<text x="%.1f" y="%.1f" fill="#93a4b8" font-family="Segoe UI, Arial" '
+                       'font-size="18" text-anchor="middle">%s</text>'
+                       % (x0 + w / 2.0, y0 + 62, note))
+    v_wl = 0.28 + 0.72 * T / D
+    out.append('<line x1="0" y1="%.1f" x2="%d" y2="%.1f" stroke="#e06666" stroke-width="2" '
+               'stroke-dasharray="9 7"/>' % (Y(v_wl), W, Y(v_wl)))
+    out.append('<text x="16" y="%.1f" fill="#e06666" font-family="Segoe UI, Arial" font-size="20">'
+               'КВЛ: осадка %0.0f м → v = %.3f (ниже — противообрастающая окраска)</text>'
+               % (Y(v_wl) - 12, T, v_wl))
+    out.append('</svg>')
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(out))
+    print("UV_LAYOUT %s (%d байт)" % (path, os.path.getsize(path)), flush=True)
 
 
 def render_clay(hull, cam, out_dir):
