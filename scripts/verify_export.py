@@ -26,7 +26,7 @@ def text_scan(path):
     mtllib = usemtl = s_lines = 0
     umin = vmin = 1e9
     umax = vmax = -1e9
-    bands = {"shell(0.28-1)": 0, "transom(0.14-0.26)": 0, "deck/bottom(0-0.13)": 0}
+    bands = {"shell(0.36-1)": 0, "coamings(0.30-0.35)": 0, "transom(0.19-0.29)": 0, "bulwark(0.155-0.185)": 0, "deck/bottom(0-0.145)": 0}
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             if line.startswith("v "):
@@ -39,12 +39,16 @@ def text_scan(path):
                 u, v = float(parts[1]), float(parts[2])
                 umin, umax = min(umin, u), max(umax, u)
                 vmin, vmax = min(vmin, v), max(vmax, v)
-                if v >= 0.275:
-                    bands["shell(0.28-1)"] += 1
-                elif v >= 0.135:
-                    bands["transom(0.14-0.26)"] += 1
+                if v >= 0.355:
+                    bands["shell(0.36-1)"] += 1
+                elif v >= 0.295:
+                    bands["coamings(0.30-0.35)"] += 1
+                elif v >= 0.185:
+                    bands["transom(0.19-0.29)"] += 1
+                elif v >= 0.15:
+                    bands["bulwark(0.155-0.185)"] += 1
                 else:
-                    bands["deck/bottom(0-0.13)"] += 1
+                    bands["deck/bottom(0-0.145)"] += 1
             elif line.startswith("f "):
                 n_f += 1
                 k = len(line.split()) - 1

@@ -2,18 +2,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000" viewBox="0 0 1000 1000">
 <rect width="100%" height="100%" fill="#12161c"/>
 <text x="16" y="30" fill="#8ab4f8" font-family="Segoe UI, Arial" font-size="24">Emma Maersk hull 1:100 — карта UV-развёртки (u / v в 0…1)</text>
-<rect x="0.0" y="0.0" width="1000.0" height="720.0" fill="#1b232d" stroke="#6fa8dc" stroke-width="2"/>
+<rect x="0.0" y="0.0" width="1000.0" height="640.0" fill="#1b232d" stroke="#6fa8dc" stroke-width="2"/>
 <text x="500.0" y="34.0" fill="#d7e6f5" font-family="Segoe UI, Arial" font-size="22" text-anchor="middle">Обшивка: борт + подводная часть</text>
 <text x="500.0" y="62.0" fill="#93a4b8" font-family="Segoe UI, Arial" font-size="18" text-anchor="middle">u — вдоль обхода корпуса (корма → нос → борт), v — от киля к палубе</text>
-<rect x="0.0" y="740.0" width="1000.0" height="120.0" fill="#1b232d" stroke="#6fa8dc" stroke-width="2"/>
-<text x="500.0" y="774.0" fill="#d7e6f5" font-family="Segoe UI, Arial" font-size="22" text-anchor="middle">Транец</text>
-<text x="500.0" y="802.0" fill="#93a4b8" font-family="Segoe UI, Arial" font-size="18" text-anchor="middle">u — по ширине транца, v — по высоте</text>
-<rect x="0.0" y="870.0" width="480.0" height="130.0" fill="#1b232d" stroke="#6fa8dc" stroke-width="2"/>
-<text x="240.0" y="904.0" fill="#d7e6f5" font-family="Segoe UI, Arial" font-size="22" text-anchor="middle">Палуба</text>
-<text x="240.0" y="932.0" fill="#93a4b8" font-family="Segoe UI, Arial" font-size="18" text-anchor="middle">план: u — по длине, v — по полушироте</text>
-<rect x="520.0" y="870.0" width="480.0" height="130.0" fill="#1b232d" stroke="#6fa8dc" stroke-width="2"/>
-<text x="760.0" y="904.0" fill="#d7e6f5" font-family="Segoe UI, Arial" font-size="22" text-anchor="middle">Днище</text>
-<text x="760.0" y="932.0" fill="#93a4b8" font-family="Segoe UI, Arial" font-size="18" text-anchor="middle">план: u — по длине, v — по полушироте</text>
-<line x1="0" y1="338.5" x2="1000" y2="338.5" stroke="#e06666" stroke-width="2" stroke-dasharray="9 7"/>
-<text x="16" y="326.5" fill="#e06666" font-family="Segoe UI, Arial" font-size="20">КВЛ: осадка 16 м → v = 0.661 (ниже — противообрастающая окраска)</text>
+<rect x="0.0" y="710.0" width="1000.0" height="100.0" fill="#1b232d" stroke="#6fa8dc" stroke-width="2"/>
+<text x="500.0" y="744.0" fill="#d7e6f5" font-family="Segoe UI, Arial" font-size="22" text-anchor="middle">Транец</text>
+<text x="500.0" y="772.0" fill="#93a4b8" font-family="Segoe UI, Arial" font-size="18" text-anchor="middle">u — по ширине транца, v — по высоте</text>
+<rect x="0.0" y="855.0" width="480.0" height="145.0" fill="#1b232d" stroke="#6fa8dc" stroke-width="2"/>
+<text x="240.0" y="889.0" fill="#d7e6f5" font-family="Segoe UI, Arial" font-size="22" text-anchor="middle">Палуба</text>
+<text x="240.0" y="917.0" fill="#93a4b8" font-family="Segoe UI, Arial" font-size="18" text-anchor="middle">план: u — по длине, v — по полушироте</text>
+<rect x="520.0" y="855.0" width="480.0" height="145.0" fill="#1b232d" stroke="#6fa8dc" stroke-width="2"/>
+<text x="760.0" y="889.0" fill="#d7e6f5" font-family="Segoe UI, Arial" font-size="22" text-anchor="middle">Днище</text>
+<text x="760.0" y="917.0" fill="#93a4b8" font-family="Segoe UI, Arial" font-size="18" text-anchor="middle">план: u — по длине, v — по полушироте</text>
+<rect x="0.0" y="815.0" width="1000.0" height="30.0" fill="#1b232d" stroke="#6fa8dc" stroke-width="2"/>
+<text x="500.0" y="849.0" fill="#d7e6f5" font-family="Segoe UI, Arial" font-size="22" text-anchor="middle">Фальшборт</text>
+<text x="500.0" y="877.0" fill="#93a4b8" font-family="Segoe UI, Arial" font-size="18" text-anchor="middle">u — по периметру палубы, v — по высоте</text>
+<rect x="0.0" y="655.0" width="1000.0" height="45.0" fill="#1b232d" stroke="#6fa8dc" stroke-width="2"/>
+<text x="500.0" y="689.0" fill="#d7e6f5" font-family="Segoe UI, Arial" font-size="22" text-anchor="middle">Комингсы люков</text>
+<text x="500.0" y="717.0" fill="#93a4b8" font-family="Segoe UI, Arial" font-size="18" text-anchor="middle">18 рамок, у каждой своя полоса по u</text>
+<line x1="0" y1="300.9" x2="1000" y2="300.9" stroke="#e06666" stroke-width="2" stroke-dasharray="9 7"/>
+<text x="16" y="288.9" fill="#e06666" font-family="Segoe UI, Arial" font-size="20">КВЛ: осадка 16 м → v = 0.699 (ниже — противообрастающая окраска)</text>
 </svg>

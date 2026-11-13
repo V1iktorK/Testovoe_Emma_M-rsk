@@ -52,6 +52,22 @@ SCALE = 0.01     # 1:100
 
 Z_TR = 13.5      # высота нижней кромки транца (knuckle), м
 
+# --- фальшборт по периметру палубы -----------------------------------------
+BULWARK_H = 1.20      # высота фальшборта над палубой, м
+BULWARK_RAKE = 0.10   # завал внутрь к планширю, м
+BULWARK_TOP = 0.22    # ширина планширя, м
+BULWARK_SINK = 0.03   # утопление в палубу, чтобы не было щели, м
+
+# --- комингсы грузовых люков (палубная «начинка» контейнеровоза) -----------
+HATCH_H = 1.20        # высота комингса над палубой, м
+HATCH_WALL = 0.28     # толщина стенки комингса, м
+HATCH_BAYS = 10       # число люков по длине
+HATCH_LEN = 23.0      # длина люка, м
+HATCH_GAP = 2.6       # мéжлюковый промежуток, м
+HATCH_X0_FRAC = 0.165 # начало грузовой палубы (доля LOA)
+HATCH_MARGIN = 1.4    # отступ от фальшборта, м
+HATCH_WALKWAY = 2.4   # проход по ДП между люками, м
+
 # ----------------------------------------------------------------------------
 # 2. ПАРАМЕТРЫ ФОРМЫ.  Контрольные точки: (список z, список значений)
 # ----------------------------------------------------------------------------
@@ -263,6 +279,137 @@ def add_uv_grid(obj, nrows, ncols, uv_fn):
     return layer
 
 
+def mesh_from_arrays(name, verts, faces):
+    """Меш из готовых списков вершин/граней (для накладных конструкций)."""
+    me = bpy.data.meshes.new(name)
+    me.from_pydata([tuple(v) for v in verts], [], [tuple(f) for f in faces])
+    me.validate(verbose=False)
+    me.update()
+    ob = bpy.data.objects.new(name, me)
+    bpy.context.collection.objects.link(ob)
+    return ob
+
+
+def set_uv_from_verts(obj, uvs):
+    """UV по таблице «вершина -> (u, v)» (на каждую петлю - по её вершине)."""
+    me = obj.data
+    layer = me.uv_layers.new(name="UVMap")
+    for poly in me.polygons:
+        for li in poly.loop_indices:
+            layer.data[li].uv = uvs[me.loops[li].vertex_index]
+
+
+def build_bulwark(top_row, transom_top):
+    """Фальшборт: замкнутая оболочка (труба) по всему периметру палубы.
+
+    Сечение: наружная стенка с завалом внутрь -> планширь -> внутренняя стенка.
+    Нижняя кромка утоплена в палубу, поэтому щелей нет.
+    Возвращает (verts, faces, uvs) в натуральных метрах.
+    """
+    path = [(p[0], p[1], p[2]) for p in top_row]                    # борт: корма -> нос -> борт
+    path += [(p[0], p[1], p[2]) for p in transom_top[1:-1]]         # транец: замыкаем контур
+    N = len(path)
+    pts = np.array([[p[0], p[1]] for p in path])
+    zs = np.array([p[2] for p in path])
+    c = np.array([pts[:, 0].mean(), 0.0])                            # центр палубы (для знака нормали)
+
+    verts, uvs = [], []
+    for i in range(N):
+        p = pts[i]
+        t = pts[(i + 1) % N] - pts[(i - 1) % N]
+        n = np.array([-t[1], t[0]])
+        ln = np.linalg.norm(n)
+        n = n / ln if ln > 1e-9 else np.array([0.0, 1.0])
+        if np.dot(n, c - p) < 0.0:
+            n = -n
+        z0 = zs[i] - BULWARK_SINK
+        a = np.array([p[0], p[1], z0])                                   # низ наружный
+        b = np.array([p[0] + BULWARK_RAKE * n[0], p[1] + BULWARK_RAKE * n[1],
+                      zs[i] + BULWARK_H])                                # верх наружный
+        cc = np.array([p[0] + (BULWARK_RAKE + BULWARK_TOP) * n[0],
+                       p[1] + (BULWARK_RAKE + BULWARK_TOP) * n[1],
+                       zs[i] + BULWARK_H])                                # верх внутренний
+        dd = np.array([p[0] + (BULWARK_RAKE + BULWARK_TOP) * n[0],
+                       p[1] + (BULWARK_RAKE + BULWARK_TOP) * n[1], z0])   # низ внутренний
+        verts.extend([a, b, cc, dd])
+        for k in range(4):
+            uvs.append((i / N, 0.155 + 0.030 * (k / 3.0)))
+
+    faces = []
+    for i in range(N):
+        j = (i + 1) % N
+        for k in range(4):
+            k2 = (k + 1) % 4
+            faces.append((i * 4 + k, j * 4 + k, j * 4 + k2, i * 4 + k2))
+    return verts, faces, uvs
+
+
+def build_coamings(top_row):
+    """Комингсы грузовых люков: 2 ряда по 10 люков, замкнутые «рамки» на палубе.
+
+    Это та самая палубная «начинка» контейнеровоза - то, что на фото читается
+    как система панелей на палубе. Низ комингса садится на палубу по 4 углам,
+    верх горизонтальный, стенка толщиной HATCH_WALL.
+    """
+    xs = np.array([p[0] for p in top_row])
+    ws = np.abs(np.array([p[1] for p in top_row]))
+    zs = np.array([p[2] for p in top_row])
+    half = len(xs) // 2 + 1
+    order = np.argsort(xs[:half])
+    x_half, w_half, z_half = xs[:half][order], ws[:half][order], zs[:half][order]
+
+    def deck_z(x):
+        return float(np.interp(x, x_half, z_half))
+
+    def deck_w(x):
+        return float(np.interp(x, x_half, w_half))
+
+    verts, uvs, faces = [], [], []
+    n_hatch = 0
+    x_start = HATCH_X0_FRAC * LOA
+    for b in range(HATCH_BAYS):
+        x0 = x_start + b * (HATCH_LEN + HATCH_GAP)
+        x1 = x0 + HATCH_LEN
+        if x1 > 0.80 * LOA:
+            break
+        w_out = min(deck_w(x0), deck_w(x1)) - HATCH_MARGIN
+        w_in = HATCH_WALKWAY / 2.0
+        if w_out - w_in < 4.0:
+            break
+        for sgn in (1.0, -1.0):
+            y_a, y_b = sorted((sgn * w_in, sgn * w_out))
+            cx, cy = (x0 + x1) / 2.0, (y_a + y_b) / 2.0
+            outer = [(x0, y_a), (x1, y_a), (x1, y_b), (x0, y_b)]
+            inner = [(px + HATCH_WALL * (1 if px < cx else -1),
+                      py + HATCH_WALL * (1 if py < cy else -1)) for (px, py) in outer]
+            z_bot = [deck_z(px) - 0.03 for (px, _) in outer]
+            z_top = max(z_bot) + HATCH_H
+            base = len(verts)
+            u0 = n_hatch / float(2 * HATCH_BAYS)
+            du = 1.0 / float(2 * HATCH_BAYS)
+            n_hatch += 1
+            for k, ((px, py), zz) in enumerate(zip(outer, z_bot)):
+                verts.append(np.array([px, py, zz]))
+                uvs.append((u0 + du * k / 4.0, 0.300))
+            for k, ((px, py), zz) in enumerate(zip(inner, z_bot)):
+                verts.append(np.array([px, py, zz]))
+                uvs.append((u0 + du * k / 4.0, 0.315))
+            for k, (px, py) in enumerate(outer):
+                verts.append(np.array([px, py, z_top]))
+                uvs.append((u0 + du * k / 4.0, 0.330))
+            for k, (px, py) in enumerate(inner):
+                verts.append(np.array([px, py, z_top]))
+                uvs.append((u0 + du * k / 4.0, 0.345))
+            e0, i0, e1, i1 = base, base + 4, base + 8, base + 12
+            for k in range(4):
+                k2 = (k + 1) % 4
+                faces.append((e0 + k, e0 + k2, e1 + k2, e1 + k))      # наружная стенка
+                faces.append((i0 + k, i0 + k2, i1 + k2, i1 + k))      # внутренняя стенка
+                faces.append((e1 + k, e1 + k2, i1 + k2, i1 + k))      # верхняя полка
+                faces.append((e0 + k, e0 + k2, i0 + k2, i0 + k))      # низ (на палубе)
+    return verts, faces, uvs
+
+
 def mesh_from_grid(name, grid):
     """grid: (rows, cols, 3) -> объект с квадовой сеткой."""
     rows, cols, _ = grid.shape
@@ -325,7 +472,7 @@ def build_hull():
     grid[:, :, 2] = warp_z(grid[:, :, 0], grid[:, :, 2])
     shell = mesh_from_grid("Hull_Shell", grid)
     # обшивка: u - вдоль обхода (корма -> нос -> борт), v - от киля к палубе
-    add_uv_grid(shell, nz, NB, lambda ri, cj: (cj / (NB - 1), 0.28 + 0.72 * ri / (nz - 1)))
+    add_uv_grid(shell, nz, NB, lambda ri, cj: (cj / (NB - 1), 0.36 + 0.64 * ri / (nz - 1)))
 
     bottom = grid[0]
 
@@ -335,7 +482,7 @@ def build_hull():
     g0[:, :, 1] = bottom[:, 1][:, None] * s_lat[None, :]
     g0[:, :, 2] = 0.0
     bottom_ob = mesh_from_grid("Hull_Bottom", g0)
-    add_uv_grid(bottom_ob, NB, NL, lambda ri, cj: (0.52 + 0.48 * ri / (NB - 1), 0.13 * cj / (NL - 1)))
+    add_uv_grid(bottom_ob, NB, NL, lambda ri, cj: (0.52 + 0.48 * ri / (NB - 1), 0.145 * cj / (NL - 1)))
 
     # --- 3. палуба (по седловатой линии верхней кромки борта) ---------------
     top = grid[-1]
@@ -344,7 +491,7 @@ def build_hull():
     gd[:, :, 1] = top[:, 1][:, None] * s_lat[None, :]
     gd[:, :, 2] = top[:, 2][:, None]
     deck_ob = mesh_from_grid("Hull_Deck", gd)
-    add_uv_grid(deck_ob, NB, NL, lambda ri, cj: (0.48 * ri / (NB - 1), 0.13 * cj / (NL - 1)))
+    add_uv_grid(deck_ob, NB, NL, lambda ri, cj: (0.48 * ri / (NB - 1), 0.145 * cj / (NL - 1)))
 
     # --- 4. транцевая плита (только выше кромки транца Z_TR) ----------------
     k_tr = int(np.searchsorted(z_rows, Z_TR - 1e-6))
@@ -357,7 +504,17 @@ def build_hull():
         gt[i, :, 2] = warp_z(float(F["xa"](z)), z)
     transom = mesh_from_grid("Hull_Transom", gt)
     add_uv_grid(transom, len(z_tr_rows), len(s_tr),
-                lambda ri, cj: (cj / (len(s_tr) - 1), 0.14 + 0.12 * ri / (len(z_tr_rows) - 1)))
+                lambda ri, cj: (cj / (len(s_tr) - 1), 0.19 + 0.10 * ri / (len(z_tr_rows) - 1)))
+
+    # --- 5. фальшборт по периметру палубы -----------------------------------
+    bv, bf, buv = build_bulwark(top, gt[-1])
+    bulwark = mesh_from_arrays("Hull_Bulwark", bv, bf)
+    set_uv_from_verts(bulwark, buv)
+
+    # --- 6. комингсы грузовых люков (палубная «начинка») --------------------
+    cv, cf, cuv = build_coamings(top)
+    coamings = mesh_from_arrays("Deck_Hatches", cv, cf)
+    set_uv_from_verts(coamings, cuv)
 
     # --- материалы ---------------------------------------------------------
     m_aft = make_material("Hull_Antifouling_Below_WL", COL_AFT, rough=0.62)
@@ -371,6 +528,8 @@ def build_hull():
     bottom_ob.data.materials.append(m_aft)
     for mat in (m_side, m_aft, m_boot):        # 0 - борт, 1 - подводная, 2 - КВЛ
         transom.data.materials.append(mat)
+    bulwark.data.materials.append(m_side)
+    coamings.data.materials.append(m_deck)
 
     for poly in shell.data.polygons:
         zc = sum(shell.data.vertices[v].co.z for v in poly.vertices) / len(poly.vertices)
@@ -381,7 +540,7 @@ def build_hull():
 
     # --- объединение -------------------------------------------------------
     bpy.ops.object.select_all(action="DESELECT")
-    for ob in (shell, bottom_ob, deck_ob, transom):
+    for ob in (shell, bottom_ob, deck_ob, transom, bulwark, coamings):
         ob.select_set(True)
     bpy.context.view_layer.objects.active = shell
     bpy.ops.object.join()
@@ -589,6 +748,9 @@ def place_cam(cam, kind, L, target_z):
     elif kind == "stern":
         cam.location = (L * 1.52, L * 0.64, L * 0.40)
         cam.data.lens = 70
+    elif kind == "deck":
+        cam.location = (-L * 0.50, -L * 0.62, L * 0.92)
+        cam.data.lens = 55
     elif kind == "side":
         cam.location = (0.0, -L * 3.0, target_z)
         cam.data.type = "ORTHO"
@@ -626,7 +788,7 @@ def place_cam(cam, kind, L, target_z):
     cam.rotation_euler = look.to_track_quat("-Z", "Y").to_euler()
 
 
-VIEW_NAMES = {"quarter_fore": "01_quarter_fore", "quarter_aft": "02_quarter_aft", "side": "03_side_ortho", "top": "04_top_ortho", "bow": "05_bow", "stern": "06_stern", "bow_side": "07_bow_side_ortho", "bow_top": "08_bow_top_ortho", "stern_side": "09_stern_side_ortho"}
+VIEW_NAMES = {"quarter_fore": "01_quarter_fore", "quarter_aft": "02_quarter_aft", "side": "03_side_ortho", "top": "04_top_ortho", "bow": "05_bow", "stern": "06_stern", "bow_side": "07_bow_side_ortho", "bow_top": "08_bow_top_ortho", "stern_side": "09_stern_side_ortho", "deck": "13_deck_view"}
 
 VIEW_RES = {
     "quarter_fore": (1600, 1000),
@@ -638,6 +800,7 @@ VIEW_RES = {
     "bow_side": (1400, 900),
     "bow_top": (1400, 900),
     "stern_side": (1400, 900),
+    "deck": (1800, 1000),
 }
 
 
@@ -685,11 +848,13 @@ CLAY_VIEWS = {"10_clay_fore": "quarter_fore", "11_clay_bow": "bow"}
 
 
 UV_MAP = [
-    (0.00, 0.28, 1.00, 1.00, "Обшивка: борт + подводная часть",
+    (0.00, 0.36, 1.00, 1.00, "Обшивка: борт + подводная часть",
      "u — вдоль обхода корпуса (корма → нос → борт), v — от киля к палубе"),
-    (0.00, 0.14, 1.00, 0.26, "Транец", "u — по ширине транца, v — по высоте"),
-    (0.00, 0.00, 0.48, 0.13, "Палуба", "план: u — по длине, v — по полушироте"),
-    (0.52, 0.00, 1.00, 0.13, "Днище", "план: u — по длине, v — по полушироте"),
+    (0.00, 0.19, 1.00, 0.29, "Транец", "u — по ширине транца, v — по высоте"),
+    (0.00, 0.00, 0.48, 0.145, "Палуба", "план: u — по длине, v — по полушироте"),
+    (0.52, 0.00, 1.00, 0.145, "Днище", "план: u — по длине, v — по полушироте"),
+    (0.00, 0.155, 1.00, 0.185, "Фальшборт", "u — по периметру палубы, v — по высоте"),
+    (0.00, 0.300, 1.00, 0.345, "Комингсы люков", "18 рамок, у каждой своя полоса по u"),
 ]
 
 
@@ -727,7 +892,7 @@ def export_uv_layout(hull, out_dir):
             out.append('<text x="%.1f" y="%.1f" fill="#93a4b8" font-family="Segoe UI, Arial" '
                        'font-size="18" text-anchor="middle">%s</text>'
                        % (x0 + w / 2.0, y0 + 62, note))
-    v_wl = 0.28 + 0.72 * T / D
+    v_wl = 0.36 + 0.64 * T / D
     out.append('<line x1="0" y1="%.1f" x2="%d" y2="%.1f" stroke="#e06666" stroke-width="2" '
                'stroke-dasharray="9 7"/>' % (Y(v_wl), W, Y(v_wl)))
     out.append('<text x="16" y="%.1f" fill="#e06666" font-family="Segoe UI, Arial" font-size="20">'
@@ -870,7 +1035,7 @@ def main():
     if do_render:
         render_previews(cam, os.path.join(out_dir, "renders"),
                         ["quarter_fore", "quarter_aft", "side", "top", "bow", "stern",
-                         "bow_side", "bow_top", "stern_side"])
+                         "bow_side", "bow_top", "stern_side", "deck"])
         render_clay(hull, cam, os.path.join(out_dir, "renders"))
 
     print("DONE")
