@@ -68,6 +68,12 @@ HATCH_X0_FRAC = 0.165 # начало грузовой палубы (доля LOA
 HATCH_MARGIN = 1.4    # отступ от фальшборта, м
 HATCH_WALKWAY = 2.4   # проход по ДП между люками, м
 
+# --- внутренний набор (начинка корпуса) ------------------------------------
+DB_HEIGHT = 2.6       # высота второго дна (внутреннее дно над ОЛ), м
+DB_THICK = 0.30       # толщина настила второго дна, м
+BH_THICK = 0.25       # толщина поперечной переборки, м
+BH_COUNT = 10         # число поперечных переборок по грузовой части
+
 # ----------------------------------------------------------------------------
 # 2. ПАРАМЕТРЫ ФОРМЫ.  Контрольные точки: (список z, список значений)
 # ----------------------------------------------------------------------------
@@ -113,6 +119,7 @@ COL_AFT = (0.150, 0.035, 0.030)   # противообрастающая окр�
 COL_BOOT = (0.018, 0.018, 0.020)  # полоса переменной ватерлинии
 COL_SIDE = (0.032, 0.045, 0.065)  # надводный борт
 COL_DECK = (0.028, 0.036, 0.030)  # палуба (тёмный серо-зелёный)
+COL_INTERNAL = (0.085, 0.090, 0.100)  # внутренний набор (серый металл)
 
 BOOT_LO, BOOT_HI = T - 0.45, T + 0.15
 
@@ -410,6 +417,64 @@ def build_coamings(top_row):
     return verts, faces, uvs
 
 
+def tube_from_rings(rings, close=False):
+    """Замкнутая пластина постоянного сечения: 4 точки на сечение -> труба."""
+    verts = [p for ring in rings for p in ring]
+    faces = []
+    n = len(rings)
+    span = n if close else n - 1
+    for i in range(span):
+        j = (i + 1) % n
+        for k in range(4):
+            k2 = (k + 1) % 4
+            faces.append((i * 4 + k, j * 4 + k, j * 4 + k2, i * 4 + k2))
+    if not close:
+        faces.append((0, 1, 2, 3))
+        m = (n - 1) * 4
+        faces.append((m + 3, m + 2, m + 1, m + 0))
+    return verts, faces
+
+
+def build_internals():
+    """Внутренний набор корпуса: второе дно + поперечные водонепроницаемые переборки.
+
+    Это «начинка», которой на фото не видно, но без неё корпус - пустая скорлупа.
+    Всё ставится с отступом от обшивки (0,25-0,35 м), чтобы не было совпадающих граней.
+    """
+    verts, uvs, faces = [], [], []
+
+    def add(rings, v_band):
+        global_v = len(verts)
+        tv, tf = tube_from_rings(rings)
+        for k, p in enumerate(tv):
+            verts.append(np.array(p))
+            uvs.append(((global_v + k) % 97 / 97.0, v_band))
+        for f in tf:
+            faces.append(tuple(i + global_v for i in f))
+
+    # --- двойное дно (настил второго дна) ---------------------------------
+    rings = []
+    for x in np.linspace(0.11 * LOA, 0.79 * LOA, 30):
+        w = max(float(half_breadth(np.array([x]), DB_HEIGHT)[0]) - 0.35, 1.0)
+        rings.append([(x, w, DB_HEIGHT - DB_THICK / 2.0), (x, w, DB_HEIGHT + DB_THICK / 2.0),
+                      (x, -w, DB_HEIGHT + DB_THICK / 2.0), (x, -w, DB_HEIGHT - DB_THICK / 2.0)])
+    add(rings, 0.292)
+
+    # --- поперечные переборки ---------------------------------------------
+    zs = np.linspace(DB_HEIGHT + DB_THICK, D - 0.2, 16)
+    for i in range(BH_COUNT):
+        x = HATCH_X0_FRAC * LOA + i * (HATCH_LEN + HATCH_GAP) - HATCH_GAP / 2.0
+        if x < 0.12 * LOA or x > 0.79 * LOA:
+            continue
+        rings = []
+        for z in zs:
+            w = max(float(half_breadth(np.array([x]), z)[0]) - 0.25, 0.5)
+            rings.append([(x - BH_THICK / 2.0, w, z), (x - BH_THICK / 2.0, -w, z),
+                          (x + BH_THICK / 2.0, -w, z), (x + BH_THICK / 2.0, w, z)])
+        add(rings, 0.296)
+    return verts, faces, uvs
+
+
 def mesh_from_grid(name, grid):
     """grid: (rows, cols, 3) -> объект с квадовой сеткой."""
     rows, cols, _ = grid.shape
@@ -516,6 +581,11 @@ def build_hull():
     coamings = mesh_from_arrays("Deck_Hatches", cv, cf)
     set_uv_from_verts(coamings, cuv)
 
+    # --- 7. внутренний набор (второе дно + переборки) -----------------------
+    iv, if_, iuv = build_internals()
+    internals = mesh_from_arrays("Hull_Internals", iv, if_)
+    set_uv_from_verts(internals, iuv)
+
     # --- материалы ---------------------------------------------------------
     m_aft = make_material("Hull_Antifouling_Below_WL", COL_AFT, rough=0.62)
     m_boot = make_material("Hull_Boot_Top_Band", COL_BOOT, rough=0.35)
@@ -528,7 +598,9 @@ def build_hull():
     bottom_ob.data.materials.append(m_aft)
     for mat in (m_side, m_aft, m_boot):        # 0 - борт, 1 - подводная, 2 - КВЛ
         transom.data.materials.append(mat)
+    m_internal = make_material("Internal_Steel", COL_INTERNAL, rough=0.55)
     bulwark.data.materials.append(m_side)
+    internals.data.materials.append(m_internal)
     coamings.data.materials.append(m_deck)
 
     for poly in shell.data.polygons:
@@ -540,7 +612,7 @@ def build_hull():
 
     # --- объединение -------------------------------------------------------
     bpy.ops.object.select_all(action="DESELECT")
-    for ob in (shell, bottom_ob, deck_ob, transom, bulwark, coamings):
+    for ob in (shell, bottom_ob, deck_ob, transom, bulwark, coamings, internals):
         ob.select_set(True)
     bpy.context.view_layer.objects.active = shell
     bpy.ops.object.join()
@@ -844,6 +916,88 @@ def export_all(hull, out_dir):
         global_scale=1.0, **common)
 
 
+CUTAWAYS = [
+    # вырез четверти: срезаем носовую и левую части - видно трюм, переборки, второе дно
+    ("14_section_quarter", dict(planes=[((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+                                       ((0.0, 0.0, 0.0), (0.0, 1.0, 0.0))],
+                                cam=(0.58, 0.52, 0.44), aim=(0.0, 0.0, 0.08), lens=45, world=3.4)),
+    # продольный разрез по ДП: ортогональная «элевация» - видно второе дно и переборки
+    ("15_section_longitudinal", dict(planes=[((0.0, 0.0, 0.0), (0.0, 1.0, 0.0))],
+                                     cam=(0.0, 1.5, 0.040), aim=None, lens=50, world=3.4,
+                                     ortho_scale=1.06,
+                                     rot=(math.pi / 2.0, 0.0, math.pi),
+                                     res=(2000, 700))),
+    # поперечный разрез: ортогонально «в торец» - классический разрез по миделю
+    ("16_section_inside", dict(planes=[((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+                                      ((0.0, 0.0, 0.0), (0.0, 1.0, 0.0))],
+                               cam=(0.100, 0.055, 0.033), aim=(-0.60, -0.05, 0.05),
+                               lens=22, world=3.4, res=(1800, 1000))),
+]
+
+
+def render_cutaways(hull, cam, out_dir):
+    """Разрезы: бисекция плоскостями + толщина листа (Solidify) + подсветка нутра."""
+    import mathutils
+
+    os.makedirs(out_dir, exist_ok=True)
+    scene = bpy.context.scene
+    L = LOA * SCALE
+    base = hull.data.copy()
+    # лампа внутрь выреза: без неё трюм чёрный
+    lamp_data = bpy.data.lights.new("SectionLamp", "POINT")
+    lamp_data.energy = 26.0
+    lamp_data.shadow_soft_size = L * 0.02
+    lamp = bpy.data.objects.new("SectionLamp", lamp_data)
+    bpy.context.collection.objects.link(lamp)
+    lamp.location = (L * 0.12, L * 0.02, L * 0.10)
+    wnode = scene.world.node_tree.nodes.get("Background") if scene.world else None
+    w_strength = wnode.inputs[1].default_value if wnode else None
+    try:
+        for name, cfd in CUTAWAYS:
+            hull.data = base.copy()
+            bm = bmesh.new()
+            bm.from_mesh(hull.data)
+            for co, no in cfd["planes"]:
+                bmesh.ops.bisect_plane(
+                    bm, geom=list(bm.verts) + list(bm.edges) + list(bm.faces),
+                    plane_co=co, plane_no=no, clear_outer=True, clear_inner=False, dist=1e-6)
+            bm.to_mesh(hull.data)
+            bm.free()
+            hull.data.update()
+            sol = hull.modifiers.new("SectionPlate", "SOLIDIFY")
+            sol.thickness = 0.0022          # ~220 мм в натуре: толщина листа видна на срезе
+            sol.offset = 0.0
+            if wnode is not None:
+                wnode.inputs[1].default_value = cfd.get("world", w_strength or 1.6)
+            cam.constraints.clear()
+            cam.location = (L * cfd["cam"][0], L * cfd["cam"][1], L * cfd["cam"][2])
+            if cfd.get("ortho_scale"):
+                cam.data.type = "ORTHO"
+                cam.data.ortho_scale = L * cfd["ortho_scale"]
+                cam.rotation_euler = cfd["rot"]
+            else:
+                cam.data.type = "PERSP"
+                cam.data.lens = cfd["lens"]
+                cam.data.clip_start = 0.005
+                look = mathutils.Vector(cfd["aim"]) - cam.location
+                cam.rotation_euler = look.to_track_quat("-Z", "Y").to_euler()
+            rx, ry = cfd.get("res", (1800, 1100))
+            scene.render.resolution_x = rx
+            scene.render.resolution_y = ry
+            scene.render.filepath = os.path.join(out_dir, name + ".png")
+            bpy.ops.render.render(write_still=True)
+            print("RENDERED %s" % name, flush=True)
+            hull.modifiers.clear()
+    except Exception as exc:                              # noqa: BLE001
+        print("RENDER_FAILED cutaway: %r" % (exc,), flush=True)
+    finally:
+        hull.modifiers.clear()
+        hull.data = base
+        bpy.data.objects.remove(lamp, do_unlink=True)
+        if wnode is not None and w_strength is not None:
+            wnode.inputs[1].default_value = w_strength
+
+
 CLAY_VIEWS = {"10_clay_fore": "quarter_fore", "11_clay_bow": "bow"}
 
 
@@ -1037,6 +1191,7 @@ def main():
                         ["quarter_fore", "quarter_aft", "side", "top", "bow", "stern",
                          "bow_side", "bow_top", "stern_side", "deck"])
         render_clay(hull, cam, os.path.join(out_dir, "renders"))
+        render_cutaways(hull, cam, os.path.join(out_dir, "renders"))
 
     print("DONE")
 
