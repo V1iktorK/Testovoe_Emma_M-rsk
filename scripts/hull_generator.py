@@ -244,6 +244,25 @@ def level_rows():
     return z
 
 
+def add_uv_grid(obj, nrows, ncols, uv_fn):
+    """UV-развёртка для патча-сетки (квады созданы в порядке row-major).
+
+    uv_fn(ri, cj) -> (u, v). Каждый патч получает свою прямоугольную область
+    в 0..1, поэтому острова не перекрываются и годятся для текстурирования.
+    """
+    me = obj.data
+    layer = me.uv_layers.new(name="UVMap")
+    corners = ((0, 0), (0, 1), (1, 1), (1, 0))
+    k = 0
+    for i in range(nrows - 1):
+        for j in range(ncols - 1):
+            poly = me.polygons[k]
+            k += 1
+            for li, (di, dj) in zip(poly.loop_indices, corners):
+                layer.data[li].uv = uv_fn(i + di, j + dj)
+    return layer
+
+
 def mesh_from_grid(name, grid):
     """grid: (rows, cols, 3) -> объект с квадовой сеткой."""
     rows, cols, _ = grid.shape
@@ -305,6 +324,8 @@ def build_hull():
     # седловатость палубы (общая для обшивки, палубы и транца)
     grid[:, :, 2] = warp_z(grid[:, :, 0], grid[:, :, 2])
     shell = mesh_from_grid("Hull_Shell", grid)
+    # обшивка: u - вдоль обхода (корма -> нос -> борт), v - от киля к палубе
+    add_uv_grid(shell, nz, NB, lambda ri, cj: (cj / (NB - 1), 0.28 + 0.72 * ri / (nz - 1)))
 
     bottom = grid[0]
 
@@ -314,6 +335,7 @@ def build_hull():
     g0[:, :, 1] = bottom[:, 1][:, None] * s_lat[None, :]
     g0[:, :, 2] = 0.0
     bottom_ob = mesh_from_grid("Hull_Bottom", g0)
+    add_uv_grid(bottom_ob, NB, NL, lambda ri, cj: (0.52 + 0.48 * ri / (NB - 1), 0.13 * cj / (NL - 1)))
 
     # --- 3. палуба (по седловатой линии верхней кромки борта) ---------------
     top = grid[-1]
@@ -322,6 +344,7 @@ def build_hull():
     gd[:, :, 1] = top[:, 1][:, None] * s_lat[None, :]
     gd[:, :, 2] = top[:, 2][:, None]
     deck_ob = mesh_from_grid("Hull_Deck", gd)
+    add_uv_grid(deck_ob, NB, NL, lambda ri, cj: (0.48 * ri / (NB - 1), 0.13 * cj / (NL - 1)))
 
     # --- 4. транцевая плита (только выше кромки транца Z_TR) ----------------
     k_tr = int(np.searchsorted(z_rows, Z_TR - 1e-6))
@@ -333,6 +356,8 @@ def build_hull():
         gt[i, :, 1] = float(F["r"](z)) * float(F["b"](z)) * s_tr
         gt[i, :, 2] = warp_z(float(F["xa"](z)), z)
     transom = mesh_from_grid("Hull_Transom", gt)
+    add_uv_grid(transom, len(z_tr_rows), len(s_tr),
+                lambda ri, cj: (cj / (len(s_tr) - 1), 0.14 + 0.12 * ri / (len(z_tr_rows) - 1)))
 
     # --- материалы ---------------------------------------------------------
     m_aft = make_material("Hull_Antifouling_Below_WL", COL_AFT, rough=0.62)
@@ -633,7 +658,7 @@ def export_all(hull, out_dir):
     common = dict(
         export_selected_objects=True,
         apply_modifiers=True,
-        export_uv=False,
+        export_uv=True,
         export_normals=True,
         export_materials=True,
         export_triangulated_mesh=False,
@@ -657,6 +682,31 @@ def export_all(hull, out_dir):
 
 
 CLAY_VIEWS = {"10_clay_fore": "quarter_fore", "11_clay_bow": "bow"}
+
+
+def export_uv_layout(hull, out_dir):
+    """Карта развёртки (SVG, векторно) - чтобы текстурировать корпус в 3ds Max/Substance.
+
+    PNG-вариант этого оператора требует инициализированного GPU, поэтому в headless
+    выгружаем SVG: он открывается в Max/Illustrator/браузере и масштабируется без потерь.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, "12_uv_layout.svg")
+    try:
+        bpy.ops.object.select_all(action="DESELECT")
+        hull.select_set(True)
+        bpy.context.view_layer.objects.active = hull
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.uv.export_layout(filepath=path, mode="SVG", size=(2048, 2048), opacity=0.35)
+        bpy.ops.object.mode_set(mode="OBJECT")
+        print("UV_LAYOUT %s" % path, flush=True)
+    except Exception as exc:                          # noqa: BLE001
+        print("UV_LAYOUT_FAILED %r" % (exc,), flush=True)
+        try:
+            bpy.ops.object.mode_set(mode="OBJECT")
+        except Exception:                             # noqa: BLE001
+            pass
 
 
 def render_clay(hull, cam, out_dir):
@@ -785,6 +835,7 @@ def main():
     if "--blend" in argv:      # рабочая сцена Blender (по умолчанию не выгружается)
         bpy.ops.wm.save_as_mainfile(filepath=os.path.join(out_dir, "Emma_Maersk_Hull.blend"))
     export_all(hull, out_dir)
+    export_uv_layout(hull, os.path.join(out_dir, "renders"))
 
     if do_render:
         render_previews(cam, os.path.join(out_dir, "renders"),

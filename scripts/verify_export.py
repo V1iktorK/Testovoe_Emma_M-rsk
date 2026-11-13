@@ -24,6 +24,9 @@ def text_scan(path):
     n_v = n_vn = n_vt = n_f = 0
     quad = tri = other = 0
     mtllib = usemtl = s_lines = 0
+    umin = vmin = 1e9
+    umax = vmax = -1e9
+    bands = {"shell(0.28-1)": 0, "transom(0.14-0.26)": 0, "deck/bottom(0-0.13)": 0}
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             if line.startswith("v "):
@@ -32,6 +35,16 @@ def text_scan(path):
                 n_vn += 1
             elif line.startswith("vt "):
                 n_vt += 1
+                parts = line.split()
+                u, v = float(parts[1]), float(parts[2])
+                umin, umax = min(umin, u), max(umax, u)
+                vmin, vmax = min(vmin, v), max(vmax, v)
+                if v >= 0.275:
+                    bands["shell(0.28-1)"] += 1
+                elif v >= 0.135:
+                    bands["transom(0.14-0.26)"] += 1
+                else:
+                    bands["deck/bottom(0-0.13)"] += 1
             elif line.startswith("f "):
                 n_f += 1
                 k = len(line.split()) - 1
@@ -50,6 +63,11 @@ def text_scan(path):
     print("[TEXT] %s" % os.path.basename(path))
     print("  v=%d vn=%d vt=%d f=%d | quads=%d tris=%d other=%d" % (n_v, n_vn, n_vt, n_f, quad, tri, other))
     print("  mtllib=%d usemtl_blocks=%d smoothing_group_lines=%d" % (mtllib, usemtl, s_lines))
+    if n_vt:
+        print("  UV bounds: u=%.3f..%.3f  v=%.3f..%.3f" % (umin, umax, vmin, vmax))
+        print("  UV по областям: " + ", ".join("%s=%d" % (k, c) for k, c in bands.items()))
+    else:
+        print("  UV отсутствуют")
 
 
 def import_and_stats(path):
